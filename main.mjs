@@ -1,7 +1,6 @@
-import { getObjectsByPrototype } from 'game/utils';
-import { Flag, Creep } from 'game/prototypes';
-import { ERR_NOT_IN_RANGE } from 'game/constants';
-import { getTicks, getRange } from 'arena/season_beta/capture_the_flag/basic';
+import { getObjectsByPrototype, getTicks, getRange } from 'game/utils';
+import { Flag, Creep, StructureContainer } from 'game/prototypes';
+import { ERR_NOT_IN_RANGE, RESOURCE_ENERGY } from 'game/constants';
 import { ATTACK, getObjectById, HEAL, RANGED_ATTACK } from 'game';
 
 export function loop() {
@@ -10,6 +9,7 @@ export function loop() {
     let myFlag = getObjectsByPrototype(Flag).find(object => object.my)
     let myCreeps = getObjectsByPrototype(Creep).filter(object => object.my);
     let opps = getObjectsByPrototype(Creep).filter(object => !object.my)
+    let container = getObjectsByPrototype(StructureContainer)
 
     // find enemies threatening the flag
     let lurkingOpps = opps.filter(opp => getRange(opp, myFlag) < 12);
@@ -22,7 +22,7 @@ export function loop() {
 
     // how many creeps do i have
     if (getTicks() % 10 === 0) {
-        console.log(`${myCreeps.length > 1 ? "I am the one who knocks" : "LAST CREEP STANDING, stop knocking"} `);
+        console.log(`${myCreeps.length > 1 ? `we ${myCreeps.length}are the ones who knock ` : "LAST CREEP STANDING, stop knocking"} `);
     }
 
     // designate each creep by type a role
@@ -38,35 +38,67 @@ export function loop() {
         }
     }
 
+    // while moving to enemy flag, attack any enemies within range
     function grappler(creep) {
-        // gang up on weakest opp near the flag
-        if (weekOpps.length > 0) {
-            creep.moveTo(weekOpps[0]);
-            creep.attack(weekOpps[0]);
-        } else {
-            // no threats nearby, stay close to the flag as a guard
-            if (getRange(creep, myFlag) > 4) {
-                creep.moveTo(myFlag);  // return to guard position if drifted too far
+        if (opps.length >= myCreeps.length) {
+            if (weekOpps.length > 0) {
+                creep.moveTo(weekOpps[0]);
+                creep.attack(weekOpps[0]);
+            } else {
+                if (getRange(creep, myFlag) > 4) {
+                    creep.moveTo(myFlag);
+                }
             }
-            // if already close to flag, wait and mentally prepare!!
+        } else {
+            // offensive push, but attack anyone nearby on the way
+            let nearbyOpps = opps.filter(opp => getRange(opp, creep) <= 1);
+            if (nearbyOpps.length > 0) {
+                creep.attack(nearbyOpps[0]);  // attack adjacent enemy
+            }
+            creep.moveTo(oppsFlag);  // keep moving regardless
         }
     }
 
     function sniper(creep) {
-        if (weekOpps.length === 0) return;
-        if (creep.rangedAttack(weekOpps[0]) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(weekOpps[0]);
+        if (opps.length <= myCreeps.length) {
+            if (weekOpps.length === 0) return;
+            if (creep.rangedAttack(weekOpps[0]) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(weekOpps[0]);
+            }
+        } else {
+            // offensive push, attack anyone within 3 tiles on the way
+            let nearbyOpps = opps.filter(opp => getRange(opp, creep) <= 3);
+            if (nearbyOpps.length > 0) {
+                creep.rangedAttack(nearbyOpps[0]);
+            }
+            creep.moveTo(oppsFlag);
         }
     }
     function doctor(creep) {
-        // lets make sure a weak ally is actually hurt #dontWasteEnergy
         let damagedAllies = weakAllies.filter(ally => ally.hits < ally.hitsMax);
-        if (damagedAllies.length === 0) return;
-
-        if (creep.heal(damagedAllies[0]) === ERR_NOT_IN_RANGE) {
-            creep.moveTo(damagedAllies[0]);
+        if (opps.length >= myCreeps.length) {
+            if (damagedAllies.length === 0) {
+                // nothing to heal, go restock from container
+                if (container[0]) {
+                    if (creep.withdraw(container[0], RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                        creep.moveTo(container[0]);
+                    }
+                }
+                return;
+            }
+            if (creep.heal(damagedAllies[0]) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(damagedAllies[0]);
+            }
+        } else {
+            // winning, follow the grapplers to keep them healed on offense
+            if (damagedAllies.length > 0) {
+                if (creep.heal(damagedAllies[0]) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(damagedAllies[0]);
+                }
+            } else {
+                creep.moveTo(oppsFlag); // no one needs healing, push forward
+            }
         }
     }
+
 }
-
-
