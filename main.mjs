@@ -14,7 +14,7 @@ export function loop() {
     let allContainers = getObjectsByPrototype(StructureContainer);
     let container = allContainers.sort((a, b) => getRange(a, myFlag) - getRange(b, myFlag));
     let myTower = getObjectsByPrototype(StructureTower).find(t => t.my);
-    let lurkingOpps = opps.filter(opp => getRange(opp, myFlag) < 30);
+    let lurkingOpps = opps.filter(opp => getRange(opp, myFlag) < 22);
     let weekOpps = [...lurkingOpps].sort((a, b) => a.hits - b.hits);
     let weakAllies = [...myCreeps].sort((a, b) => a.hits - b.hits);
     let forceAggressive = getTicks() > AGGRESSION_TICK; //lets get down to business
@@ -165,7 +165,8 @@ export function loop() {
     }
 
     // fire tower
-    if (myTower && towerTarget) {
+    // only fire if target is within tower range
+    if (myTower && towerTarget && getRange(myTower, towerTarget) <= 20) {
         myTower.attack(towerTarget);
     }
 }
