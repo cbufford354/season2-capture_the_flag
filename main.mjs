@@ -5,6 +5,7 @@ import { ATTACK, HEAL, RANGED_ATTACK, CARRY } from 'game';
 
 const creepRoles = new Map();
 const AGGRESSION_TICK = 1000;
+let lastThreatTick = 0;
 export function loop() {
 
     let oppsFlag = getObjectsByPrototype(Flag).find(object => !object.my);
@@ -14,17 +15,20 @@ export function loop() {
     let allContainers = getObjectsByPrototype(StructureContainer);
     let container = allContainers.sort((a, b) => getRange(a, myFlag) - getRange(b, myFlag));
     let myTower = getObjectsByPrototype(StructureTower).find(t => t.my);
-    let lurkingOpps = opps.filter(opp => getRange(opp, myFlag) < 22);
+    let lurkingOpps = opps.filter(opp => getRange(opp, myFlag) < 17);
     let weekOpps = [...lurkingOpps].sort((a, b) => a.hits - b.hits);
     let weakAllies = [...myCreeps].sort((a, b) => a.hits - b.hits);
     let forceAggressive = getTicks() > AGGRESSION_TICK; //lets get down to business
     let flagThreat = lurkingOpps.length > 0; // enemies still near flag
-    let shouldDefend = !forceAggressive && (flagThreat || opps.length >= myCreeps.length);
     let leader = myCreeps.find(c => creepRoles.get(c.id) === 'grappler'); //follow the leader 
     let captureThreats = [...lurkingOpps].sort((a, b) => getRange(a, myFlag) - getRange(b, myFlag));
+    let recentThreat = getTicks() - lastThreatTick < 50;
+    let shouldDefend = !forceAggressive && (flagThreat || recentThreat || opps.length >= myCreeps.length);
 
-
-
+    // track when we last saw enemies near flag
+    if (lurkingOpps.length > 0) {
+        lastThreatTick = getTicks();
+    }
 
     // tower targets enemy healers first, then closest to flag
     let enemyHealers = opps.filter(opp => opp.body.some(p => p.type === HEAL));
@@ -164,7 +168,6 @@ export function loop() {
         }
     }
 
-    // fire tower
     // only fire if target is within tower range
     if (myTower && towerTarget && getRange(myTower, towerTarget) <= 20) {
         myTower.attack(towerTarget);
