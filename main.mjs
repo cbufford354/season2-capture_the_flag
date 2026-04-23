@@ -21,6 +21,8 @@ export function loop() {
     let flagThreat = lurkingOpps.length > 0; // enemies still near flag
     let shouldDefend = !forceAggressive && (flagThreat || opps.length >= myCreeps.length);
     let leader = myCreeps.find(c => creepRoles.get(c.id) === 'grappler'); //follow the leader 
+    // closest enemy to flag = biggest capture threat
+    let captureThreats = [...lurkingOpps].sort((a, b) => getRange(a, myFlag) - getRange(b, myFlag));
 
     // tower targets enemy healers first, then closest to flag
     let enemyHealers = opps.filter(opp => opp.body.some(p => p.type === HEAL));
@@ -67,8 +69,8 @@ export function loop() {
     function grappler(creep) {
         if (shouldDefend) {
             if (weekOpps.length > 0) {
-                creep.moveTo(weekOpps[0]);
-                creep.attack(weekOpps[0]);
+                creep.moveTo(captureThreats[0]);
+                creep.attack(captureThreats[0]);
             } else {
                 if (getRange(creep, myFlag) > 4) {
                     creep.moveTo(myFlag);
@@ -89,8 +91,8 @@ export function loop() {
             let nearbyOpps = opps.filter(opp => getRange(opp, creep) <= 3);
             if (nearbyOpps.length >= 3) {
                 creep.rangedMassAttack();
-            } else if (creep.rangedAttack(weekOpps[0]) === ERR_NOT_IN_RANGE) {
-                creep.moveTo(weekOpps[0]);
+            } else if (creep.rangedAttack(captureThreats[0]) === ERR_NOT_IN_RANGE) {
+                creep.moveTo(captureThreats[0]);
             }
         } else {
             // stay within 3 tiles of leader before pushing
@@ -106,7 +108,7 @@ export function loop() {
         }
     }
 
-    function doctor(creep) {
+    function doctor(creep, leader) {
         let damagedAllies = weakAllies.filter(ally => ally.hits < ally.hitsMax);
 
         if (shouldDefend) {
