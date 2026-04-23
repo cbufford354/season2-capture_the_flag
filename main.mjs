@@ -1,44 +1,64 @@
 import { getObjectsByPrototype, getTicks, getRange } from 'game/utils';
-import { Flag, Creep, StructureContainer } from 'game/prototypes';
+import { Flag, Creep, StructureContainer, StructureTower } from 'game/prototypes';
 import { ERR_NOT_IN_RANGE, RESOURCE_ENERGY } from 'game/constants';
-import { ATTACK, getObjectById, HEAL, RANGED_ATTACK } from 'game';
+import { ATTACK, HEAL, RANGED_ATTACK, CARRY } from 'game';
+
+const creepRoles = new Map();
 
 export function loop() {
 
     let oppsFlag = getObjectsByPrototype(Flag).find(object => !object.my);
-    let myFlag = getObjectsByPrototype(Flag).find(object => object.my)
-    let myCreeps = getObjectsByPrototype(Creep).filter(object => object.my);
-    let opps = getObjectsByPrototype(Creep).filter(object => !object.my)
-    let container = getObjectsByPrototype(StructureContainer)
+    let myFlag = getObjectsByPrototype(Flag).find(object => object.my);
+    let myCreeps = getObjectsByPrototype(Creep).filter(object => object.my && !object.spawning);
+    let opps = getObjectsByPrototype(Creep).filter(object => !object.my);
+    let container = getObjectsByPrototype(StructureContainer);
+    let myTower = getObjectsByPrototype(StructureTower).find(t => t.my);
 
-    // find enemies threatening the flag
     let lurkingOpps = opps.filter(opp => getRange(opp, myFlag) < 12);
-    // find week opps
-    let weekOpps = lurkingOpps.sort((a, b) => a.hits - b.hits);
-    // find week allies
-    let weakAllies = myCreeps.sort((a, b) => a.hits - b.hits);
-    // find close opps
-    let closeOpps = lurkingOpps.sort((a, b) => getRange(a, myFlag) - getRange(b, myFlag));
+    let weekOpps = [...lurkingOpps].sort((a, b) => a.hits - b.hits);
+    let weakAllies = [...myCreeps].sort((a, b) => a.hits - b.hits);
+    let closeOpps = [...lurkingOpps].sort((a, b) => getRange(a, myFlag) - getRange(b, myFlag));
 
-    // how many creeps do i have
+    // tower targets enemy healers first, then closest to flag
+    let enemyHealers = opps.filter(opp => opp.body.some(p => p.type === HEAL));
+    let towerTarget = myTower ?
+        (enemyHealers.length > 0 ?
+            myTower.findClosestByRange(enemyHealers) :
+            myTower.findClosestByRange(lurkingOpps)) :
+        null;
+
+    // debug logs every 10 ticks
     if (getTicks() % 10 === 0) {
-        console.log(`${myCreeps.length > 1 ? `we ${myCreeps.length}are the ones who knock ` : "LAST CREEP STANDING, stop knocking"} `);
+        console.log(`${myCreeps.length > 1 ? `we ${myCreeps.length} are the ones who knock` : "LAST CREEP STANDING, stop knocking"}`);
+        if (myTower) console.log(`Tower energy: ${myTower.store[RESOURCE_ENERGY]}/10`);
     }
 
-    // designate each creep by type a role
+    // assign roles once at the start
     for (let creep of myCreeps) {
-        if (creep.body.some(creep => creep.type === ATTACK)) {
-            grappler(creep);
-        }
-        if (creep.body.some(creep => creep.type === RANGED_ATTACK)) {
-            sniper(creep);
-        }
-        if (creep.body.some(creep => creep.type === HEAL)) {
-            doctor(creep)
+        if (!creepRoles.has(creep.id)) {
+            if (creep.body.some(p => p.type === CARRY) &&
+                !creep.body.some(p => p.type === ATTACK) &&
+                !creep.body.some(p => p.type === RANGED_ATTACK)) {
+                creepRoles.set(creep.id, 'supplier');
+            } else if (creep.body.some(p => p.type === HEAL)) {
+                creepRoles.set(creep.id, 'doctor');
+            } else if (creep.body.some(p => p.type === RANGED_ATTACK)) {
+                creepRoles.set(creep.id, 'sniper');
+            } else if (creep.body.some(p => p.type === ATTACK)) {
+                creepRoles.set(creep.id, 'grappler');
+            }
         }
     }
 
-    // while moving to enemy flag, attack any enemies within range
+    // run roles
+    for (let creep of myCreeps) {
+        const role = creepRoles.get(creep.id);
+        if (role === 'grappler') grappler(creep);
+        else if (role === 'sniper') sniper(creep);
+        else if (role === 'doctor') doctor(creep);
+        else if (role === 'supplier') drugDealer(creep);
+    }
+
     function grappler(creep) {
         if (opps.length >= myCreeps.length) {
             if (weekOpps.length > 0) {
@@ -50,23 +70,24 @@ export function loop() {
                 }
             }
         } else {
-            // offensive push, but attack anyone nearby on the way
             let nearbyOpps = opps.filter(opp => getRange(opp, creep) <= 1);
             if (nearbyOpps.length > 0) {
-                creep.attack(nearbyOpps[0]);  // attack adjacent enemy
+                creep.attack(nearbyOpps[0]);
             }
-            creep.moveTo(oppsFlag);  // keep moving regardless
+            creep.moveTo(oppsFlag);
         }
     }
 
     function sniper(creep) {
         if (opps.length <= myCreeps.length) {
             if (weekOpps.length === 0) return;
-            if (creep.rangedAttack(weekOpps[0]) === ERR_NOT_IN_RANGE) {
+            let nearbyOpps = opps.filter(opp => getRange(opp, creep) <= 3);
+            if (nearbyOpps.length >= 3) {
+                creep.rangedMassAttack();
+            } else if (creep.rangedAttack(weekOpps[0]) === ERR_NOT_IN_RANGE) {
                 creep.moveTo(weekOpps[0]);
             }
         } else {
-            // offensive push, attack anyone within 3 tiles on the way
             let nearbyOpps = opps.filter(opp => getRange(opp, creep) <= 3);
             if (nearbyOpps.length > 0) {
                 creep.rangedAttack(nearbyOpps[0]);
@@ -74,14 +95,20 @@ export function loop() {
             creep.moveTo(oppsFlag);
         }
     }
+
     function doctor(creep) {
         let damagedAllies = weakAllies.filter(ally => ally.hits < ally.hitsMax);
         if (opps.length >= myCreeps.length) {
             if (damagedAllies.length === 0) {
-                // nothing to heal, go restock from container
                 if (container[0]) {
-                    if (creep.withdraw(container[0], RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
-                        creep.moveTo(container[0]);
+                    if (creep.store[RESOURCE_ENERGY] > 0) {
+                        if (creep.transfer(myTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(myTower);
+                        }
+                    } else {
+                        if (creep.withdraw(container[0], RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                            creep.moveTo(container[0]);
+                        }
                     }
                 }
                 return;
@@ -90,15 +117,44 @@ export function loop() {
                 creep.moveTo(damagedAllies[0]);
             }
         } else {
-            // winning, follow the grapplers to keep them healed on offense
             if (damagedAllies.length > 0) {
                 if (creep.heal(damagedAllies[0]) === ERR_NOT_IN_RANGE) {
                     creep.moveTo(damagedAllies[0]);
                 }
             } else {
-                creep.moveTo(oppsFlag); // no one needs healing, push forward
+                creep.moveTo(oppsFlag);
             }
         }
     }
 
+    function drugDealer(creep) {
+        if (!creep.body.some(part => part.type === CARRY)) return;
+
+        // tower is full, nothing to do
+        if (myTower && myTower.store[RESOURCE_ENERGY] === myTower.store.getCapacity(RESOURCE_ENERGY)) return;
+
+        // stagger multiple suppliers using creep id to avoid conflicts
+        const isEven = creep.id.charCodeAt(0) % 2 === 0;
+
+        if (creep.store[RESOURCE_ENERGY] > 0) {
+            if (myTower) {
+                if (creep.transfer(myTower, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(myTower);
+                }
+            }
+        } else {
+            // pick different containers if available to avoid crowding
+            const targetContainer = isEven ? container[0] : (container[1] || container[0]);
+            if (targetContainer) {
+                if (creep.withdraw(targetContainer, RESOURCE_ENERGY) === ERR_NOT_IN_RANGE) {
+                    creep.moveTo(targetContainer);
+                }
+            }
+        }
+    }
+
+    // fire tower
+    if (myTower && towerTarget) {
+        myTower.attack(towerTarget);
+    }
 }
